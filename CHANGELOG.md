@@ -5,6 +5,9 @@ A breaking change will get clearly marked in this log.
 ## Unreleased
 
 ### Fixed
+* `ContractSpec` now decodes a struct field literally named `__proto__` as an own property of the result, matching the event decoder. It was previously dropped (primitive values) or installed as the result's prototype (object values), which also made the decoded struct fail to re-encode; `jsonSchema()` dropped such fields and arguments the same way. Function arguments and struct fields named `__proto__` must be passed as own properties when encoding (see `funcArgsToScVals`) ([#1734](https://github.com/stellar/js-stellar-sdk/issues/1734)).
+
+### Fixed
 * Templated Horizon `_links` functions now resolve a relative `href` the same way non-templated links do. They previously threw `TypeError: Invalid URL` ([#1771](https://github.com/stellar/js-stellar-sdk/pull/1771)).
 
 ## [v17.2.1](https://github.com/stellar/js-stellar-sdk/compare/v17.2.0...v17.2.1)

@@ -1017,3 +1017,128 @@ describe("parsing and building ScVals", () => {
     expect(fn).deep.equal(func);
   });
 });
+
+describe("Spec names literally '__proto__' (#1734)", () => {
+  const u32Type = xdr.ScSpecTypeDef.scSpecTypeU32();
+  const udtType = (name: string) =>
+    xdr.ScSpecTypeDef.scSpecTypeUdt(new xdr.ScSpecTypeUdt({ name }));
+  const structEntry = (
+    name: string,
+    fields: [string, xdr.ScSpecTypeDef][],
+  ): xdr.ScSpecEntry =>
+    xdr.ScSpecEntry.scSpecEntryUdtStructV0(
+      new xdr.ScSpecUdtStructV0({
+        doc: "",
+        lib: "",
+        name,
+        fields: fields.map(
+          ([fname, type]) =>
+            new xdr.ScSpecUdtStructFieldV0({ doc: "", name: fname, type }),
+        ),
+      }),
+    );
+  const funcEntry = (
+    name: string,
+    inputs: [string, xdr.ScSpecTypeDef][],
+  ): xdr.ScSpecEntry =>
+    xdr.ScSpecEntry.scSpecEntryFunctionV0(
+      new xdr.ScSpecFunctionV0({
+        doc: "",
+        name,
+        inputs: inputs.map(
+          ([iname, type]) =>
+            new xdr.ScSpecFunctionInputV0({ doc: "", name: iname, type }),
+        ),
+        outputs: [],
+      }),
+    );
+  const mapOf = (entries: [string, xdr.ScVal][]): xdr.ScVal =>
+    xdr.ScVal.scvMap(
+      entries.map(
+        ([k, v]) => new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(k), val: v }),
+      ),
+    );
+
+  const protoSpec = new contract.Spec([
+    structEntry("Inner", [["a", u32Type]]),
+    structEntry("Evil", [
+      ["__proto__", u32Type],
+      ["other", u32Type],
+    ]),
+    structEntry("EvilObj", [
+      ["__proto__", udtType("Inner")],
+      ["other", u32Type],
+    ]),
+    funcEntry("take", [["__proto__", u32Type]]),
+    funcEntry("take_evil", [["x", udtType("Evil")]]),
+  ]);
+
+  it("decodes a primitive __proto__ field as an own property", () => {
+    const scv = mapOf([
+      ["__proto__", xdr.ScVal.scvU32(1337)],
+      ["other", xdr.ScVal.scvU32(7)],
+    ]);
+    const out: any = protoSpec.scValToNative(scv, udtType("Evil"));
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true);
+    expect(out["__proto__"]).toBe(1337);
+    expect(out.other).toBe(7);
+  });
+
+  it("decodes an object __proto__ field without replacing the prototype", () => {
+    const scv = mapOf([
+      ["__proto__", mapOf([["a", xdr.ScVal.scvU32(99)]])],
+      ["other", xdr.ScVal.scvU32(7)],
+    ]);
+    const out: any = protoSpec.scValToNative(scv, udtType("EvilObj"));
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true);
+    expect(out["__proto__"]).toEqual({ a: 99 });
+    // a name the struct does not declare must not resolve via a prototype
+    expect(out.a).toBeUndefined();
+    expect(({} as any).a).toBeUndefined();
+  });
+
+  it("round-trips a decoded struct with a __proto__ field", () => {
+    const scv = mapOf([
+      ["__proto__", xdr.ScVal.scvU32(1337)],
+      ["other", xdr.ScVal.scvU32(7)],
+    ]);
+    const out: any = protoSpec.scValToNative(scv, udtType("Evil"));
+    expect(protoSpec.nativeToScVal(out, udtType("Evil"))).toEqual(scv);
+  });
+
+  it("encodes a function argument named __proto__ passed as an own property", () => {
+    const args: any = {};
+    Object.defineProperty(args, "__proto__", {
+      value: 42,
+      enumerable: true,
+    });
+    expect(protoSpec.funcArgsToScVals("take", args)).toEqual([
+      xdr.ScVal.scvU32(42),
+    ]);
+  });
+
+  it("encodes a struct field named __proto__ passed as an own property", () => {
+    const inner: any = { other: 7 };
+    Object.defineProperty(inner, "__proto__", {
+      value: 5,
+      enumerable: true,
+    });
+    const vals = protoSpec.funcArgsToScVals("take_evil", { x: inner });
+    expect(vals).toEqual([
+      mapOf([
+        ["__proto__", xdr.ScVal.scvU32(5)],
+        ["other", xdr.ScVal.scvU32(7)],
+      ]),
+    ]);
+  });
+
+  it("keeps a __proto__ field in the JSON schema", () => {
+    const schema: any = protoSpec.jsonSchema();
+    const evil = schema.definitions.Evil;
+    expect(
+      Object.prototype.hasOwnProperty.call(evil.properties, "__proto__"),
+    ).toBe(true);
+    expect(JSON.stringify(evil)).toContain("__proto__");
+    expect(evil.required).toContain("__proto__");
+  });
+});

@@ -365,7 +365,10 @@ function argsAndRequired(input: { type: ScSpecTypeDef; name: XdrString }[]): {
   properties: object;
   required?: string[];
 } {
-  const properties: any = {};
+  // Argument and field names come from the contract spec, so a name
+  // literally "__proto__" must be stored as an own property rather than
+  // reaching the object's prototype (see `structToNative`).
+  const properties: any = Object.create(null);
   const required: string[] = [];
   input.forEach((arg) => {
     const aType = arg.type;
@@ -597,6 +600,13 @@ export class Spec {
 
   /**
    * Converts native JS arguments to ScVals for calling a contract function.
+   *
+   * An argument or struct field literally named `__proto__` (legal in a
+   * contract spec) must be passed as an own property of `args`: an object
+   * literal like `{ __proto__: value }` creates no own property, so use
+   * `Object.defineProperty`, `JSON.parse`, or a null-prototype object to
+   * supply one. Values decoded by this class already carry such fields as
+   * own properties and can be passed back directly.
    *
    * @param name - the name of the function
    * @param args - the arguments object
@@ -1179,7 +1189,12 @@ export class Spec {
   }
 
   private structToNative(val: ScVal, udt: ScSpecUdtStructV0): any {
-    const res: any = {};
+    // Field names come from an untrusted, on-chain contract spec, so a field
+    // literally named "__proto__" must not be able to reach the object's
+    // prototype via normal property assignment. A null-prototype object
+    // stores it as a plain own property instead. This matches the event
+    // decoder in `event_spec.ts`.
+    const res: any = Object.create(null);
     const fields = udt.fields;
     // Tuple-like structs (numeric field names) are encoded as scvVec; regular
     // structs are encoded as scvMap. Match the encoding side in
@@ -1344,7 +1359,11 @@ export class Spec {
    * @throws if the contract spec is invalid
    */
   jsonSchema(funcName?: string): JSONSchema7 {
-    const definitions: { [key: string]: JSONSchema7Definition } = {};
+    // Type and function names come from the contract spec; a null-prototype
+    // map keeps a name literally "__proto__" an own property (see
+    // `structToNative`). The spread below copies own properties safely.
+    const definitions: { [key: string]: JSONSchema7Definition } =
+      Object.create(null);
 
     this.entries.forEach((entry) => {
       switch (entry.type) {
